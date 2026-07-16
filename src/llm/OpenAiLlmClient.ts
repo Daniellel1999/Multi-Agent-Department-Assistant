@@ -5,7 +5,7 @@ export class OpenAiLlmClient implements LlmClient {
   private readonly client: OpenAI;
   private readonly model: string;
 
-  constructor(apiKey = process.env.OPENAI_API_KEY, model = process.env.OPENAI_MODEL ?? "gpt-4o-mini") {
+  constructor(apiKey = process.env.OPENAI_API_KEY, model = process.env.OPENAI_MODEL ?? "gpt-5.4-mini") {
     if (!apiKey) {
       throw new Error("OPENAI_API_KEY is required unless AI_ASSESSMENT_MOCK_LLM=true.");
     }

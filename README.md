@@ -16,15 +16,7 @@ npm install
 cp .env.example .env
 ```
 
-Set `OPENAI_API_KEY` in `.env` for real model calls. The default model is `gpt-4o-mini`; override it with `OPENAI_MODEL`.
-
-If the CLI returns an OpenAI `model_not_found` or 403 error, set `OPENAI_MODEL` to a model your project/key is allowed to use. Some restricted project keys cannot list models, so the app cannot always discover this automatically.
-
-For local smoke tests without API calls, set:
-
-```bash
-AI_ASSESSMENT_MOCK_LLM=true
-```
+Set `OPENAI_API_KEY` in `.env`. No other configuration is required.
 
 ## Commands
 
