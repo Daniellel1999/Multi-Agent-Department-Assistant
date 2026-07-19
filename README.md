@@ -123,7 +123,7 @@ The test suite covers:
 - final synthesis and fallback behavior
 - application-service dispatch
 
-## Trade-offs
+## Trade-offs and Limitations
 
 - Deterministic routing is less flexible than an LLM classifier but is more appropriate for this small assessment.
 - Fact-key grounding is intentionally simpler than general free-text hallucination detection.
