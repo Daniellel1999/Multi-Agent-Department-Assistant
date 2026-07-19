@@ -18,14 +18,6 @@ cp .env.example .env
 
 Set `OPENAI_API_KEY` in `.env`. No other configuration is required.
 
-## Commands
-
-```bash
-npm run dev -- "What is our cash balance?"
-npm run typecheck
-npm test
-```
-
 ## Examples
 
 ```bash
