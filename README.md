@@ -83,19 +83,36 @@ The model returns:
 
 Application code validates fact keys against the department allow-list, resolves values from trusted mock data, constructs `GroundedFact` objects, and adds the department field. Model-generated fact values are never trusted.
 
+For final cross-department recommendations, `factsUsed` contains only facts selected as materially supporting the recommendation, a constraint, a trade-off, or an unresolved disagreement. Facts are not included merely because they were available earlier in the discussion.
+
 ## Orchestration
 
 For cross-department questions, the orchestrator uses a bounded one-round discussion:
 
 1. Finance and HR independently analyze the question.
 2. Both initial responses are validated and grounded.
-3. Finance receives the validated HR response, and HR receives the validated Finance response.
+3. Finance receives HR's validated initial position, and HR receives Finance's validated initial position.
 4. Each agent produces exactly one peer response.
-5. The orchestrator synthesizes one joint recommendation from validated initial and peer responses.
+5. Peer responses are validated and grounded.
+6. The orchestrator synthesizes one joint recommendation using the revised positions.
+
+```text
+Independent initial analyses
+        ↓
+Validation and grounding
+        ↓
+One mutual peer-response round
+        ↓
+Validation and grounding
+        ↓
+Joint recommendation using revised positions
+```
 
 This is intentionally limited to one round for predictable cost, bounded latency, easier testing, and lower repetition or hallucination risk. Single-department questions use one LLM call. Cross-department questions use up to five LLM calls: Finance initial, HR initial, Finance peer response, HR peer response, and final synthesis.
 
-If an initial response cannot be grounded, the app skips peer discussion and returns a low-confidence insufficient-information fallback. If a peer response fails, synthesis continues from the validated initial responses. If final synthesis fails or references unsupported facts, the app returns a conservative fallback with the validated Finance position, validated HR position, any valid peer refinement, and low confidence.
+Raw department data is never shared between agents. Only validated responses are shared as peer context.
+
+If an initial response cannot be grounded, the app skips peer discussion and returns a low-confidence insufficient-information fallback. If a peer response fails, synthesis continues from the validated initial responses and any valid peer refinement that remains. If final synthesis fails or references unsupported facts, the app returns a conservative fallback with the Finance position, HR position, any valid refinement, and low confidence.
 
 Example:
 

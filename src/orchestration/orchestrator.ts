@@ -1,6 +1,6 @@
 import { orchestrationSystemPrompt } from "../agents/prompts.js";
 import type { Agent } from "../agents/Agent.js";
-import type { AgentResponse, Confidence, FinalResponse, GroundedFact } from "../domain.js";
+import type { AgentResponse, Confidence, DiscussionResult, FinalResponse, GroundedFact } from "../domain.js";
 import type { LlmClient } from "../llm/LlmClient.js";
 import { factIdentity, filterFactsToAllowedFacts } from "./groundingValidation.js";
 import { parseJsonObject } from "../utils/parseJsonResponse.js";
@@ -29,10 +29,6 @@ export class Orchestrator {
     const financePeerResponse = settledAgentResponse(financePeerResult);
     const hrPeerResponse = settledAgentResponse(hrPeerResult);
 
-    if (!hasGroundedFacts(financePeerResponse) || !hasGroundedFacts(hrPeerResponse)) {
-      return this.combineDepartmentResponses(question, financeResponse, hrResponse);
-    }
-
     return this.combineDepartmentResponses(question, financeResponse, hrResponse, financePeerResponse, hrPeerResponse);
   }
 
@@ -43,19 +39,40 @@ export class Orchestrator {
     financePeerResponse?: AgentResponse,
     hrPeerResponse?: AgentResponse
   ): Promise<FinalResponse> {
-    const missingGroundedDepartments = getMissingGroundedDepartments(financeResponse, hrResponse);
+    const discussion: DiscussionResult = {
+      question,
+      financeInitial: financeResponse,
+      hrInitial: hrResponse
+    };
+    if (financePeerResponse) {
+      discussion.financePeerResponse = financePeerResponse;
+    }
+    if (hrPeerResponse) {
+      discussion.hrPeerResponse = hrPeerResponse;
+    }
+
+    return this.synthesizeDiscussion(discussion);
+  }
+
+  async synthesizeDiscussion(discussion: DiscussionResult): Promise<FinalResponse> {
+    const missingGroundedDepartments = getMissingGroundedDepartments(discussion.financeInitial, discussion.hrInitial);
     if (missingGroundedDepartments.length > 0) {
-      return this.insufficientGroundingFallback(financeResponse, hrResponse, missingGroundedDepartments, [
-        financePeerResponse,
-        hrPeerResponse
+      return this.insufficientGroundingFallback(discussion.financeInitial, discussion.hrInitial, missingGroundedDepartments, [
+        discussion.financePeerResponse,
+        discussion.hrPeerResponse
       ]);
     }
 
-    const validResponses = [financeResponse, hrResponse, financePeerResponse, hrPeerResponse].filter(
+    const validResponses = [
+      discussion.financeInitial,
+      discussion.hrInitial,
+      discussion.financePeerResponse,
+      discussion.hrPeerResponse
+    ].filter(
       hasGroundedFacts
     );
     const allowedFacts = validResponses.flatMap((response) => response.factsUsed);
-    const allowedFactKeys = allowedFacts.map(factIdentity);
+    const allowedFactKeys = uniqueStrings(allowedFacts.map(factIdentity));
 
     try {
       const modelOutput = await this.llmClient.completeJson({
@@ -64,11 +81,7 @@ export class Orchestrator {
           {
             role: "user",
             content: JSON.stringify({
-              question,
-              financeResponse,
-              hrResponse,
-              financePeerResponse,
-              hrPeerResponse,
+              discussion,
               allowedFactKeys
             })
           }
@@ -76,45 +89,48 @@ export class Orchestrator {
       });
       const parsed = parseSynthesisOutput(modelOutput);
       if (!parsed) {
-        return this.fallback(financeResponse, hrResponse, "Synthesis output was invalid.", [
-          financePeerResponse,
-          hrPeerResponse
+        return this.fallback(discussion.financeInitial, discussion.hrInitial, "A complete recommendation is not available.", [
+          discussion.financePeerResponse,
+          discussion.hrPeerResponse
         ]);
       }
 
       if (parsed.factKeys.length === 0) {
-        return this.fallback(financeResponse, hrResponse, "Synthesis did not reference any validated facts.", [
-          financePeerResponse,
-          hrPeerResponse
+        return this.fallback(discussion.financeInitial, discussion.hrInitial, "A complete recommendation is not available.", [
+          discussion.financePeerResponse,
+          discussion.hrPeerResponse
         ]);
       }
 
       if (parsed.factKeys.some((key) => !allowedFactKeys.includes(key))) {
-        return this.fallback(financeResponse, hrResponse, "Synthesis referenced unsupported facts.", [
-          financePeerResponse,
-          hrPeerResponse
+        return this.fallback(discussion.financeInitial, discussion.hrInitial, "A complete recommendation is not available.", [
+          discussion.financePeerResponse,
+          discussion.hrPeerResponse
         ]);
       }
 
-      if (!referencesRequiredDepartments(parsed.factKeys, financeResponse, hrResponse)) {
+      if (!referencesRequiredDepartments(parsed.factKeys, discussion.financeInitial, discussion.hrInitial)) {
         return this.fallback(
-          financeResponse,
-          hrResponse,
-          "Synthesis did not reference validated facts from each grounded department.",
-          [financePeerResponse, hrPeerResponse]
+          discussion.financeInitial,
+          discussion.hrInitial,
+          "A complete recommendation is not available.",
+          [discussion.financePeerResponse, discussion.hrPeerResponse]
         );
       }
 
-      const requestedFacts = factsByKeys(parsed.factKeys, allowedFacts);
+      const requestedFacts = factsByKeys(uniqueStrings(parsed.factKeys), allowedFacts);
       return {
         answer: parsed.answer,
-        factsUsed: filterFactsToAllowedFacts(requestedFacts, allowedFacts),
+        factsUsed: uniqueFacts(filterFactsToAllowedFacts(requestedFacts, allowedFacts)),
         assumptions: parsed.assumptions,
         confidence: parsed.confidence,
         department: "both"
       };
     } catch {
-      return this.fallback(financeResponse, hrResponse, "Synthesis failed.", [financePeerResponse, hrPeerResponse]);
+      return this.fallback(discussion.financeInitial, discussion.hrInitial, "A complete recommendation is not available.", [
+        discussion.financePeerResponse,
+        discussion.hrPeerResponse
+      ]);
     }
   }
 
@@ -131,18 +147,18 @@ export class Orchestrator {
       ...validPeerResponses.flatMap((response) => response.factsUsed)
     ];
     const peerLines = validPeerResponses.map(
-      (response) => `${labelDepartment(response)} peer refinement: ${response.answer}`
+      (response) => `${labelDepartment(response)} refinement: ${response.answer}`
     );
 
     return {
       answer: [
         `${reason}`,
-        `Finance perspective: ${financeResponse.answer}`,
-        `HR perspective: ${hrResponse.answer}`,
+        `Finance position: ${financeResponse.answer}`,
+        `HR position: ${hrResponse.answer}`,
         ...peerLines,
-        "Recommendation: insufficient information for a stronger combined recommendation without a valid synthesis."
+        "Recommendation: use the grounded department positions above, but treat the final decision as low confidence."
       ].join(" "),
-      factsUsed,
+      factsUsed: uniqueFacts(factsUsed),
       assumptions: [
         ...financeResponse.assumptions,
         ...hrResponse.assumptions,
@@ -164,13 +180,13 @@ export class Orchestrator {
     return {
       answer: [
         `Insufficient information: ${missingDepartments.join(" and ")} lacked grounded facts.`,
-        "A joint Finance and HR recommendation cannot be produced from the validated agent responses."
+        "A joint Finance and HR recommendation cannot be produced from the available information."
       ].join(" "),
-      factsUsed: [
+      factsUsed: uniqueFacts([
         ...financeResponse.factsUsed,
         ...hrResponse.factsUsed,
         ...validPeerResponses.flatMap((response) => response.factsUsed)
-      ],
+      ]),
       assumptions: [
         ...financeResponse.assumptions,
         ...hrResponse.assumptions,
@@ -232,6 +248,23 @@ function factsByKeys(keys: string[], facts: GroundedFact[]): GroundedFact[] {
     const fact = byKey.get(key);
     return fact ? [fact] : [];
   });
+}
+
+function uniqueFacts(facts: GroundedFact[]): GroundedFact[] {
+  const seen = new Set<string>();
+  const unique: GroundedFact[] = [];
+  for (const fact of facts) {
+    const key = factIdentity(fact);
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(fact);
+    }
+  }
+  return unique;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function referencesRequiredDepartments(

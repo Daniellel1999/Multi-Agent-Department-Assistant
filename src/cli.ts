@@ -26,9 +26,9 @@ class DemoLlmClient implements LlmClient {
     if ("peerContext" in payload && "financeData" in payload) {
       return {
         answer:
-          "Finance maintains a critical-only hiring stance after considering HR's validated capacity concerns.",
+          "Finance maintains a critical-only hiring stance after considering HR's capacity concerns.",
         factKeys: ["approvedHiringBudget", "financeNotes"],
-        assumptions: ["HR capacity concerns are considered only from the validated peer response."],
+        assumptions: ["HR capacity concerns are considered only from HR's grounded analysis."],
         confidence: "medium"
       };
     }
@@ -38,7 +38,7 @@ class DemoLlmClient implements LlmClient {
         answer:
           "HR agrees hiring should prioritize critical roles, with engineering open roles remaining the main workforce constraint.",
         factKeys: ["engineeringOpenRoles", "capacityNotes"],
-        assumptions: ["Finance budget constraints are considered only from the validated peer response."],
+        assumptions: ["Finance budget constraints are considered only from Finance's grounded analysis."],
         confidence: "medium"
       };
     }
@@ -83,10 +83,11 @@ class DemoLlmClient implements LlmClient {
           "Recommendation: proceed only with critical hiring. Finance maintains the budget constraint after HR's peer input, and HR agrees engineering capacity is the main workforce trade-off.",
         factKeys: [
           "finance:approvedHiringBudget",
+          "finance:notes",
           "hr:openRolesByDepartment.engineering",
           "hr:capacityNotes"
         ],
-        assumptions: ["This recommendation is limited to the validated finance and HR responses."],
+        assumptions: ["This recommendation is limited to the available Finance and HR data."],
         confidence: "medium"
       };
     }

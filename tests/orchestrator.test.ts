@@ -1,7 +1,11 @@
-import type { AgentResponse } from "../src/domain.js";
+import type { AgentResponse, DiscussionResult } from "../src/domain.js";
 import type { Agent } from "../src/agents/Agent.js";
 import type { LlmClient, LlmJsonRequest } from "../src/llm/LlmClient.js";
 import { Orchestrator } from "../src/orchestration/orchestrator.js";
+import { FinanceAgent } from "../src/agents/FinanceAgent.js";
+import { HrAgent } from "../src/agents/HrAgent.js";
+import { financeData } from "../src/data/financeData.js";
+import { hrData } from "../src/data/hrData.js";
 
 class RecordingLlmClient implements LlmClient {
   readonly requests: LlmJsonRequest[] = [];
@@ -14,6 +18,63 @@ class RecordingLlmClient implements LlmClient {
       throw new Error("LLM failed");
     }
     return this.response;
+  }
+}
+
+class DiscussionAwareLlmClient implements LlmClient {
+  readonly requests: LlmJsonRequest[] = [];
+
+  async completeJson(request: LlmJsonRequest): Promise<unknown> {
+    this.requests.push(request);
+    const payload = JSON.parse(request.messages.at(-1)?.content ?? "{}") as Record<string, unknown>;
+
+    if ("financeData" in payload && !("peerContext" in payload)) {
+      return {
+        answer: "Finance is cautious about hiring and supports only critical roles.",
+        factKeys: ["approvedHiringBudget"],
+        assumptions: [],
+        confidence: "high"
+      };
+    }
+
+    if ("hrData" in payload && !("peerContext" in payload)) {
+      return {
+        answer: "HR supports targeted engineering hiring.",
+        factKeys: ["engineeringOpenRoles"],
+        assumptions: [],
+        confidence: "high"
+      };
+    }
+
+    if ("financeData" in payload && "peerContext" in payload) {
+      return {
+        answer: "Finance agrees critical engineering roles can be prioritized within the hiring budget.",
+        factKeys: ["approvedHiringBudget", "financeNotes"],
+        assumptions: [],
+        confidence: "medium"
+      };
+    }
+
+    if ("hrData" in payload && "peerContext" in payload) {
+      return {
+        answer: "HR narrows its recommendation to critical engineering roles after Finance's budget constraint.",
+        factKeys: ["engineeringOpenRoles", "capacityNotes"],
+        assumptions: [],
+        confidence: "medium"
+      };
+    }
+
+    if ("discussion" in payload) {
+      const discussion = payload.discussion as DiscussionResult;
+      return {
+        answer: `Yes, but selectively. ${discussion.financePeerResponse?.answer} ${discussion.hrPeerResponse?.answer}`,
+        factKeys: ["finance:approvedHiringBudget", "finance:notes", "hr:openRolesByDepartment.engineering", "hr:capacityNotes"],
+        assumptions: [],
+        confidence: "medium"
+      };
+    }
+
+    throw new Error("Unexpected request");
   }
 }
 
@@ -102,6 +163,36 @@ const hrPeerResponse: AgentResponse = {
   department: "hr"
 };
 
+const revisedFinancePeerResponse: AgentResponse = {
+  answer: "Finance now recommends delaying non-critical hiring until role-level costs are evaluated.",
+  factsUsed: [
+    {
+      source: "finance",
+      label: "Approved hiring budget",
+      value: 240000,
+      path: "approvedHiringBudget"
+    }
+  ],
+  assumptions: ["Role-level costs are not available."],
+  confidence: "medium",
+  department: "finance"
+};
+
+const revisedHrPeerResponse: AgentResponse = {
+  answer: "HR revises its recommendation to delay broad hiring and focus only on the delivery-risk roles.",
+  factsUsed: [
+    {
+      source: "hr",
+      label: "Capacity notes",
+      value: "Engineering managers report delivery risk from unfilled backend roles.",
+      path: "capacityNotes"
+    }
+  ],
+  assumptions: [],
+  confidence: "medium",
+  department: "hr"
+};
+
 const ungroundedFinanceResponse: AgentResponse = {
   answer: "Finance Agent response could not be grounded in the available finance data.",
   factsUsed: [],
@@ -119,6 +210,36 @@ const ungroundedHrResponse: AgentResponse = {
 };
 
 describe("Orchestrator", () => {
+  it("successful both flow performs exactly five LLM operations and shares only validated peer contexts", async () => {
+    const llm = new DiscussionAwareLlmClient();
+    const orchestrator = new Orchestrator(llm);
+    const financeAgent = new FinanceAgent(llm, financeData);
+    const hrAgent = new HrAgent(llm, hrData);
+
+    const response = await orchestrator.runDepartmentDiscussion(
+      "Should we hire more people?",
+      financeAgent,
+      hrAgent
+    );
+
+    expect(response.answer).toContain("critical engineering roles");
+    expect(llm.requests).toHaveLength(5);
+
+    const payloads = llm.requests.map((request) => JSON.parse(request.messages.at(-1)?.content ?? "{}"));
+    expect(payloads.filter((payload) => "financeData" in payload && !("peerContext" in payload))).toHaveLength(1);
+    expect(payloads.filter((payload) => "hrData" in payload && !("peerContext" in payload))).toHaveLength(1);
+    expect(payloads.filter((payload) => "financeData" in payload && "peerContext" in payload)).toHaveLength(1);
+    expect(payloads.filter((payload) => "hrData" in payload && "peerContext" in payload)).toHaveLength(1);
+    expect(payloads.filter((payload) => "discussion" in payload)).toHaveLength(1);
+
+    const financePeerPayload = payloads.find((payload) => "financeData" in payload && "peerContext" in payload);
+    const hrPeerPayload = payloads.find((payload) => "hrData" in payload && "peerContext" in payload);
+    expect(financePeerPayload.peerContext.department).toBe("hr");
+    expect(hrPeerPayload.peerContext.department).toBe("finance");
+    expect(JSON.stringify(financePeerPayload)).not.toContain("hrData");
+    expect(JSON.stringify(hrPeerPayload)).not.toContain("financeData");
+  });
+
   it("coordinates one bounded discussion round before synthesis", async () => {
     const llm = new RecordingLlmClient({
       answer: "Proceed with critical engineering hiring.",
@@ -167,7 +288,7 @@ describe("Orchestrator", () => {
     expect(response.answer).toContain("Finance lacked grounded facts");
   });
 
-  it("continues to initial-response synthesis when one peer response call fails", async () => {
+  it("continues synthesis from initial responses and any valid peer response when one peer call fails", async () => {
     const llm = new RecordingLlmClient({
       answer: "Proceed carefully using the initial Finance and HR positions.",
       factKeys: ["finance:approvedHiringBudget", "hr:openRolesByDepartment.engineering"],
@@ -190,13 +311,13 @@ describe("Orchestrator", () => {
     expect(hrAgent.peerCalls).toHaveLength(1);
     const payload = llm.requests[0]?.messages.at(-1)?.content ?? "";
     expect(payload).not.toContain("financePeerResponse");
-    expect(payload).not.toContain("hrPeerResponse");
+    expect(payload).toContain("hrPeerResponse");
   });
 
-  it("combines validated agent responses and preserves allowed facts", async () => {
+  it("combines validated agent responses and includes only selected material facts", async () => {
     const llm = new RecordingLlmClient({
       answer: "Proceed with critical engineering hiring.",
-      factKeys: ["finance:approvedHiringBudget", "hr:openRolesByDepartment.engineering"],
+      factKeys: ["finance:approvedHiringBudget", "finance:approvedHiringBudget", "hr:openRolesByDepartment.engineering"],
       assumptions: ["Recommendation is limited to validated responses."],
       confidence: "medium"
     });
@@ -230,7 +351,7 @@ describe("Orchestrator", () => {
     );
 
     expect(response.confidence).toBe("low");
-    expect(response.answer).toContain("did not reference any validated facts");
+    expect(response.answer).toContain("A complete recommendation is not available");
     expect(response.answer).not.toBe("Proceed with hiring.");
   });
 
@@ -251,7 +372,7 @@ describe("Orchestrator", () => {
     );
 
     expect(response.confidence).toBe("low");
-    expect(response.answer).toContain("unsupported facts");
+    expect(response.answer).toContain("A complete recommendation is not available");
   });
 
   it("falls back when synthesis references only one department while both supplied grounded facts", async () => {
@@ -271,7 +392,7 @@ describe("Orchestrator", () => {
     );
 
     expect(response.confidence).toBe("low");
-    expect(response.answer).toContain("each grounded department");
+    expect(response.answer).toContain("A complete recommendation is not available");
     expect(response.answer).not.toBe("Proceed based only on finance.");
   });
 
@@ -362,8 +483,9 @@ describe("Orchestrator", () => {
     );
     const payload = llm.requests[0]?.messages.at(-1)?.content ?? "";
 
-    expect(payload).toContain("financeResponse");
-    expect(payload).toContain("hrResponse");
+    expect(payload).toContain("discussion");
+    expect(payload).toContain("financeInitial");
+    expect(payload).toContain("hrInitial");
     expect(payload).toContain("financePeerResponse");
     expect(payload).toContain("hrPeerResponse");
     expect(payload).toContain("allowedFactKeys");
@@ -392,6 +514,128 @@ describe("Orchestrator", () => {
     expect(response.factsUsed).toEqual([...financePeerResponse.factsUsed, ...hrPeerResponse.factsUsed]);
   });
 
+  it("final recommendation changes when peer responses change while initial responses stay the same", async () => {
+    class PeerSensitiveLlmClient implements LlmClient {
+      async completeJson(request: LlmJsonRequest): Promise<unknown> {
+        const payload = JSON.parse(request.messages.at(-1)?.content ?? "{}") as { discussion: DiscussionResult };
+        const financePeerAnswer = payload.discussion.financePeerResponse?.answer ?? "";
+        if (financePeerAnswer.includes("delaying")) {
+          return {
+            answer:
+              "Delay broad hiring. Finance added a cost constraint, while HR narrowed support to delivery-risk roles.",
+            factKeys: ["finance:approvedHiringBudget", "hr:capacityNotes"],
+            assumptions: [],
+            confidence: "medium"
+          };
+        }
+
+        return {
+          answer:
+            "Yes, hire critical engineering roles. Both departments converged on targeted hiring after the discussion.",
+          factKeys: ["finance:notes", "hr:capacityNotes"],
+          assumptions: [],
+          confidence: "medium"
+        };
+      }
+    }
+
+    const orchestrator = new Orchestrator(new PeerSensitiveLlmClient());
+    const versionA = await orchestrator.combineDepartmentResponses(
+      "Should we hire more people?",
+      financeResponse,
+      hrResponse,
+      financePeerResponse,
+      hrPeerResponse
+    );
+    const versionB = await orchestrator.combineDepartmentResponses(
+      "Should we hire more people?",
+      financeResponse,
+      hrResponse,
+      revisedFinancePeerResponse,
+      revisedHrPeerResponse
+    );
+
+    expect(versionA.answer).toContain("hire critical engineering roles");
+    expect(versionB.answer).toContain("Delay broad hiring");
+    expect(versionA.answer).not.toBe(versionB.answer);
+  });
+
+  it("successful wording is user-facing and avoids internal implementation terms", async () => {
+    const llm = new RecordingLlmClient({
+      answer:
+        "Yes, but selectively. Finance supports hiring only for critical roles within the approved budget, while HR identifies engineering as the highest-priority need because unfilled backend roles are creating delivery risk.",
+      factKeys: ["finance:approvedHiringBudget", "finance:notes", "hr:capacityNotes"],
+      assumptions: ["Role-level costs were not provided."],
+      confidence: "medium"
+    });
+    const orchestrator = new Orchestrator(llm);
+
+    const response = await orchestrator.combineDepartmentResponses(
+      "Should we hire more people?",
+      financeResponse,
+      hrResponse,
+      financePeerResponse,
+      hrPeerResponse
+    );
+
+    expect(response.answer).toMatch(/^Yes, but selectively/);
+    expect(response.answer).toContain("approved budget");
+    expect(response.answer).toContain("delivery risk");
+    expect(response.answer.toLowerCase()).not.toContain("validated finance response");
+    expect(response.answer.toLowerCase()).not.toContain("validated hr response");
+    expect(response.answer.toLowerCase()).not.toContain("peer response");
+    expect(response.answer.toLowerCase()).not.toContain("orchestrator");
+    expect(response.answer.toLowerCase()).not.toContain("fact key");
+    expect(response.answer.toLowerCase()).not.toContain("model output");
+    expect(response.answer.toLowerCase()).not.toContain("supplied context");
+    expect(response.answer.toLowerCase()).not.toContain("engagement score");
+  });
+
+  it("omits available but irrelevant facts from final factsUsed", async () => {
+    const financeWithExtraFact: AgentResponse = {
+      ...financeResponse,
+      factsUsed: [
+        ...financeResponse.factsUsed,
+        {
+          source: "finance",
+          label: "Cash balance",
+          value: 4200000,
+          path: "cashBalance"
+        }
+      ]
+    };
+    const hrWithExtraFact: AgentResponse = {
+      ...hrResponse,
+      factsUsed: [
+        ...hrResponse.factsUsed,
+        {
+          source: "hr",
+          label: "Engagement score",
+          value: 72,
+          path: "engagementScore"
+        }
+      ]
+    };
+    const llm = new RecordingLlmClient({
+      answer: "Yes, but selectively based on budget and engineering need.",
+      factKeys: ["finance:approvedHiringBudget", "hr:openRolesByDepartment.engineering"],
+      assumptions: [],
+      confidence: "medium"
+    });
+    const orchestrator = new Orchestrator(llm);
+
+    const response = await orchestrator.combineDepartmentResponses(
+      "Should we hire more people?",
+      financeWithExtraFact,
+      hrWithExtraFact
+    );
+
+    expect(response.factsUsed.map((fact) => fact.path)).toEqual([
+      "approvedHiringBudget",
+      "openRolesByDepartment.engineering"
+    ]);
+  });
+
   it("falls back when synthesis fails", async () => {
     const orchestrator = new Orchestrator(new RecordingLlmClient({}, true));
 
@@ -403,7 +647,7 @@ describe("Orchestrator", () => {
 
     expect(response.department).toBe("both");
     expect(response.confidence).toBe("low");
-    expect(response.answer).toContain("Finance perspective");
+    expect(response.answer).toContain("Finance position");
     expect(response.factsUsed).toEqual([...financeResponse.factsUsed, ...hrResponse.factsUsed]);
   });
 
@@ -424,6 +668,6 @@ describe("Orchestrator", () => {
     );
 
     expect(response.confidence).toBe("low");
-    expect(response.answer).toContain("unsupported facts");
+    expect(response.answer).toContain("A complete recommendation is not available");
   });
 });

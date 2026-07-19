@@ -47,3 +47,11 @@ export interface FinalResponse {
   confidence: Confidence;
   department: Department;
 }
+
+export interface DiscussionResult {
+  question: string;
+  financeInitial: AgentResponse;
+  hrInitial: AgentResponse;
+  financePeerResponse?: AgentResponse;
+  hrPeerResponse?: AgentResponse;
+}
