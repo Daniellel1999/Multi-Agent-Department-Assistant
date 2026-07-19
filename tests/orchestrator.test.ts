@@ -1,4 +1,4 @@
-import type { AgentResponse, DiscussionResult } from "../src/domain.js";
+import type { AgentDepartment, AgentResponse, DiscussionResult, PeerContext } from "../src/domain.js";
 import type { Agent } from "../src/agents/Agent.js";
 import type { LlmClient, LlmJsonRequest } from "../src/llm/LlmClient.js";
 import { Orchestrator } from "../src/orchestration/orchestrator.js";
@@ -78,12 +78,12 @@ class DiscussionAwareLlmClient implements LlmClient {
   }
 }
 
-class FakeAgent implements Agent {
+class FakeAgent<TDepartment extends AgentDepartment> implements Agent {
   readonly answerCalls: string[] = [];
   readonly peerCalls: Array<{ question: string; peerDepartment: "finance" | "hr" }> = [];
 
   constructor(
-    readonly department: "finance" | "hr",
+    readonly department: TDepartment,
     private readonly initialResponse: AgentResponse,
     private readonly peerResponse: AgentResponse,
     private readonly failPeer = false
@@ -94,7 +94,7 @@ class FakeAgent implements Agent {
     return this.initialResponse;
   }
 
-  async respondToPeer(question: string, peerContext: AgentResponse): Promise<AgentResponse> {
+  async respondToPeer(question: string, peerContext: PeerContext): Promise<AgentResponse> {
     this.peerCalls.push({ question, peerDepartment: peerContext.department });
     if (this.failPeer) {
       throw new Error("peer failed");

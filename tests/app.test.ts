@@ -1,11 +1,17 @@
 import { createApp } from "../src/app.js";
-import type { Agent } from "../src/agents/Agent.js";
+import type { Agent, FinanceAgentContract, HrAgentContract } from "../src/agents/Agent.js";
 import type { AgentResponse, FinalResponse } from "../src/domain.js";
 
-function createAgent(
-  department: "finance" | "hr",
+type RecordingAgent<TDepartment extends "finance" | "hr"> = Agent & {
+  readonly department: TDepartment;
+  calls: string[];
+  peerCalls: string[];
+};
+
+function createAgent<TDepartment extends "finance" | "hr">(
+  department: TDepartment,
   answer: string
-): Agent & { calls: string[]; peerCalls: string[] } {
+): RecordingAgent<TDepartment> {
   return {
     department,
     calls: [],
@@ -103,8 +109,8 @@ describe("application service", () => {
     const financeAgent = createAgent("finance", "finance");
     const hrAgent = createAgent("hr", "hr");
     let coordinatorQuestion = "";
-    let coordinatorFinanceAgent: Agent | undefined;
-    let coordinatorHrAgent: Agent | undefined;
+    let coordinatorFinanceAgent: FinanceAgentContract | undefined;
+    let coordinatorHrAgent: HrAgentContract | undefined;
     const app = createApp({
       financeAgent,
       hrAgent,

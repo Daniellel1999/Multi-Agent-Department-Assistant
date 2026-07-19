@@ -1,6 +1,6 @@
 import { orchestrationSystemPrompt } from "../agents/prompts.js";
-import type { Agent } from "../agents/Agent.js";
-import type { AgentResponse, Confidence, DiscussionResult, FinalResponse, GroundedFact } from "../domain.js";
+import type { FinanceAgentContract, HrAgentContract } from "../agents/Agent.js";
+import type { AgentResponse, Confidence, DiscussionResult, FinalResponse, GroundedFact, PeerContext } from "../domain.js";
 import type { LlmClient } from "../llm/LlmClient.js";
 import { factIdentity, filterFactsToAllowedFacts } from "./groundingValidation.js";
 import { parseJsonObject } from "../utils/parseJsonResponse.js";
@@ -15,7 +15,11 @@ interface SynthesisOutput {
 export class Orchestrator {
   constructor(private readonly llmClient: LlmClient) {}
 
-  async runDepartmentDiscussion(question: string, financeAgent: Agent, hrAgent: Agent): Promise<FinalResponse> {
+  async runDepartmentDiscussion(
+    question: string,
+    financeAgent: FinanceAgentContract,
+    hrAgent: HrAgentContract
+  ): Promise<FinalResponse> {
     const [financeResponse, hrResponse] = await Promise.all([financeAgent.answer(question), hrAgent.answer(question)]);
 
     if (!hasGroundedFacts(financeResponse) || !hasGroundedFacts(hrResponse)) {
@@ -207,7 +211,7 @@ function labelDepartment(response: AgentResponse): string {
   return response.department === "finance" ? "Finance" : "HR";
 }
 
-function toPeerContext(response: AgentResponse) {
+function toPeerContext(response: AgentResponse): PeerContext {
   return {
     department: response.department,
     answer: response.answer,

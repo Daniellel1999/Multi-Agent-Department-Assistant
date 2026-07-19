@@ -77,7 +77,7 @@ class DemoLlmClient implements LlmClient {
       };
     }
 
-    if ("financeResponse" in payload && "hrResponse" in payload) {
+    if ("discussion" in payload) {
       return {
         answer:
           "Recommendation: proceed only with critical hiring. Finance maintains the budget constraint after HR's peer input, and HR agrees engineering capacity is the main workforce trade-off.",

@@ -1,4 +1,4 @@
-import type { Agent } from "./agents/Agent.js";
+import type { FinanceAgentContract, HrAgentContract } from "./agents/Agent.js";
 import { FinanceAgent } from "./agents/FinanceAgent.js";
 import { HrAgent } from "./agents/HrAgent.js";
 import { financeData } from "./data/financeData.js";
@@ -10,8 +10,8 @@ import { Orchestrator } from "./orchestration/orchestrator.js";
 import { routeQuestion } from "./routing/router.js";
 
 export interface AppDependencies {
-  financeAgent: Agent;
-  hrAgent: Agent;
+  financeAgent: FinanceAgentContract;
+  hrAgent: HrAgentContract;
   orchestrator: Pick<Orchestrator, "runDepartmentDiscussion">;
 }
 
@@ -43,23 +43,26 @@ export async function answerQuestion(question: string, dependencies: AppDependen
 
   const route = routeQuestion(trimmed);
 
-  if (route.route === "finance") {
-    return dependencies.financeAgent.answer(trimmed);
+  switch (route.route) {
+    case "finance":
+      return dependencies.financeAgent.answer(trimmed);
+    case "hr":
+      return dependencies.hrAgent.answer(trimmed);
+    case "both":
+      return dependencies.orchestrator.runDepartmentDiscussion(trimmed, dependencies.financeAgent, dependencies.hrAgent);
+    case "unknown":
+      return {
+        answer: "I can answer only finance and HR questions using the available mock department data.",
+        factsUsed: [],
+        assumptions: [],
+        confidence: "low",
+        department: "unknown"
+      };
+    default:
+      return assertNever(route.route);
   }
+}
 
-  if (route.route === "hr") {
-    return dependencies.hrAgent.answer(trimmed);
-  }
-
-  if (route.route === "both") {
-    return dependencies.orchestrator.runDepartmentDiscussion(trimmed, dependencies.financeAgent, dependencies.hrAgent);
-  }
-
-  return {
-    answer: "I can answer only finance and HR questions using the available mock department data.",
-    factsUsed: [],
-    assumptions: [],
-    confidence: "low",
-    department: "unknown"
-  };
+function assertNever(value: never): never {
+  throw new Error(`Unhandled route: ${value}`);
 }

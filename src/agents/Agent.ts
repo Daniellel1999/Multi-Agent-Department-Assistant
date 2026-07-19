@@ -5,3 +5,7 @@ export interface Agent {
   answer(question: string): Promise<AgentResponse>;
   respondToPeer(question: string, peerContext: PeerContext): Promise<AgentResponse>;
 }
+
+export type FinanceAgentContract = Agent & { readonly department: "finance" };
+
+export type HrAgentContract = Agent & { readonly department: "hr" };
