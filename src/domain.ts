@@ -32,6 +32,14 @@ export interface AgentResponse {
   department: AgentDepartment;
 }
 
+export interface PeerContext {
+  department: AgentDepartment;
+  answer: string;
+  factsUsed: GroundedFact[];
+  assumptions: string[];
+  confidence: Confidence;
+}
+
 export interface FinalResponse {
   answer: string;
   factsUsed: GroundedFact[];

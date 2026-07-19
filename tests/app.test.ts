@@ -2,14 +2,28 @@ import { createApp } from "../src/app.js";
 import type { Agent } from "../src/agents/Agent.js";
 import type { AgentResponse, FinalResponse } from "../src/domain.js";
 
-function createAgent(department: "finance" | "hr", answer: string): Agent & { calls: string[] } {
+function createAgent(
+  department: "finance" | "hr",
+  answer: string
+): Agent & { calls: string[]; peerCalls: string[] } {
   return {
     department,
     calls: [],
+    peerCalls: [],
     async answer(question: string): Promise<AgentResponse> {
       this.calls.push(question);
       return {
         answer,
+        factsUsed: [],
+        assumptions: [],
+        confidence: "high",
+        department
+      };
+    },
+    async respondToPeer(question: string): Promise<AgentResponse> {
+      this.peerCalls.push(question);
+      return {
+        answer: `${answer} peer`,
         factsUsed: [],
         assumptions: [],
         confidence: "high",
@@ -28,7 +42,7 @@ describe("application service", () => {
       financeAgent,
       hrAgent,
       orchestrator: {
-        async combineDepartmentResponses(): Promise<FinalResponse> {
+        async runDepartmentDiscussion(): Promise<FinalResponse> {
           orchestratorCalls += 1;
           throw new Error("Should not be called");
         }
@@ -50,7 +64,7 @@ describe("application service", () => {
       financeAgent,
       hrAgent,
       orchestrator: {
-        async combineDepartmentResponses(): Promise<FinalResponse> {
+        async runDepartmentDiscussion(): Promise<FinalResponse> {
           throw new Error("Should not be called");
         }
       }
@@ -60,6 +74,8 @@ describe("application service", () => {
 
     expect(financeAgent.calls).toEqual(["What is our cash balance?"]);
     expect(hrAgent.calls).toEqual([]);
+    expect(financeAgent.peerCalls).toEqual([]);
+    expect(hrAgent.peerCalls).toEqual([]);
   });
 
   it("HR route calls only HR Agent with the question", async () => {
@@ -69,7 +85,7 @@ describe("application service", () => {
       financeAgent,
       hrAgent,
       orchestrator: {
-        async combineDepartmentResponses(): Promise<FinalResponse> {
+        async runDepartmentDiscussion(): Promise<FinalResponse> {
           throw new Error("Should not be called");
         }
       }
@@ -79,18 +95,24 @@ describe("application service", () => {
 
     expect(financeAgent.calls).toEqual([]);
     expect(hrAgent.calls).toEqual(["How many open roles do we have?"]);
+    expect(financeAgent.peerCalls).toEqual([]);
+    expect(hrAgent.peerCalls).toEqual([]);
   });
 
-  it("both route calls both agents and the orchestrator with validated responses", async () => {
+  it("both route delegates to the bounded discussion coordinator", async () => {
     const financeAgent = createAgent("finance", "finance");
     const hrAgent = createAgent("hr", "hr");
-    const orchestratorInputs: AgentResponse[] = [];
+    let coordinatorQuestion = "";
+    let coordinatorFinanceAgent: Agent | undefined;
+    let coordinatorHrAgent: Agent | undefined;
     const app = createApp({
       financeAgent,
       hrAgent,
       orchestrator: {
-        async combineDepartmentResponses(_question, financeResponse, hrResponse): Promise<FinalResponse> {
-          orchestratorInputs.push(financeResponse, hrResponse);
+        async runDepartmentDiscussion(question, receivedFinanceAgent, receivedHrAgent): Promise<FinalResponse> {
+          coordinatorQuestion = question;
+          coordinatorFinanceAgent = receivedFinanceAgent;
+          coordinatorHrAgent = receivedHrAgent;
           return {
             answer: "combined",
             factsUsed: [],
@@ -105,8 +127,10 @@ describe("application service", () => {
     const response = await app.answerQuestion("Should we hire more people?");
 
     expect(response.department).toBe("both");
-    expect(financeAgent.calls).toEqual(["Should we hire more people?"]);
-    expect(hrAgent.calls).toEqual(["Should we hire more people?"]);
-    expect(orchestratorInputs.map((input) => input.department)).toEqual(["finance", "hr"]);
+    expect(coordinatorQuestion).toBe("Should we hire more people?");
+    expect(coordinatorFinanceAgent).toBe(financeAgent);
+    expect(coordinatorHrAgent).toBe(hrAgent);
+    expect(financeAgent.calls).toEqual([]);
+    expect(hrAgent.calls).toEqual([]);
   });
 });

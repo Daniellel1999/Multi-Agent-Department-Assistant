@@ -5,7 +5,7 @@ Small TypeScript CLI application with two isolated AI agents:
 - Finance Agent: receives only hardcoded finance mock data.
 - HR Agent: receives only hardcoded HR mock data.
 - Router: deterministically routes questions to finance, HR, both, or unknown.
-- Orchestrator: combines validated finance and HR responses for cross-department questions.
+- Orchestrator: coordinates one bounded peer-response round and synthesizes cross-department recommendations.
 
 ## Setup
 
@@ -49,7 +49,7 @@ Responses are structured as JSON:
 
 ## Architecture Summary
 
-The CLI calls an application service. The service routes the question, calls the relevant agent or agents, and invokes the orchestrator only for cross-department questions.
+The CLI calls an application service. The service routes the question, calls the relevant agent for single-department questions, and invokes the orchestrator only for cross-department questions.
 
 The LLM is behind a small `LlmClient` interface. Tests use mock clients and never require a real API key.
 
@@ -66,7 +66,7 @@ new FinanceAgent(llmClient, financeData);
 new HrAgent(llmClient, hrData);
 ```
 
-`Agent.answer()` accepts only the user question. The application service never passes arbitrary department data into an agent call.
+`Agent.answer()` accepts only the user question. For cross-department discussion, each agent has a separate peer-response method that receives only the other department's validated response. Agents never receive the other department's raw mock data.
 
 ## Grounding
 
@@ -85,7 +85,25 @@ Application code validates fact keys against the department allow-list, resolves
 
 ## Orchestration
 
-For cross-department questions, both agents answer independently. The orchestrator receives only validated `AgentResponse` objects, not raw department data. If synthesis fails or references unsupported facts, the app returns a conservative fallback with the finance perspective, HR perspective, and low confidence.
+For cross-department questions, the orchestrator uses a bounded one-round discussion:
+
+1. Finance and HR independently analyze the question.
+2. Both initial responses are validated and grounded.
+3. Finance receives the validated HR response, and HR receives the validated Finance response.
+4. Each agent produces exactly one peer response.
+5. The orchestrator synthesizes one joint recommendation from validated initial and peer responses.
+
+This is intentionally limited to one round for predictable cost, bounded latency, easier testing, and lower repetition or hallucination risk. Single-department questions use one LLM call. Cross-department questions use up to five LLM calls: Finance initial, HR initial, Finance peer response, HR peer response, and final synthesis.
+
+If an initial response cannot be grounded, the app skips peer discussion and returns a low-confidence insufficient-information fallback. If a peer response fails, synthesis continues from the validated initial responses. If final synthesis fails or references unsupported facts, the app returns a conservative fallback with the validated Finance position, validated HR position, any valid peer refinement, and low confidence.
+
+Example:
+
+```bash
+npm run dev -- "Should we hire more people?"
+```
+
+The response is one joint recommendation with validated facts from Finance and HR, not two separate answers placed next to each other.
 
 ## Tests
 
@@ -93,6 +111,7 @@ The test suite covers:
 
 - finance, HR, both, and unknown routing
 - agent data isolation and `answer(question)` call shape
+- one bounded peer-response round for cross-department questions
 - fact-key validation and trusted value resolution
 - rejection or discard of invalid fact keys
 - orchestration synthesis and fallback behavior

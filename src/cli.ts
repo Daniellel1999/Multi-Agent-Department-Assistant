@@ -23,6 +23,26 @@ class DemoLlmClient implements LlmClient {
     const payload = JSON.parse(lastMessage) as Record<string, unknown>;
     const question = String(payload.question ?? "").toLowerCase();
 
+    if ("peerContext" in payload && "financeData" in payload) {
+      return {
+        answer:
+          "Finance maintains a critical-only hiring stance after considering HR's validated capacity concerns.",
+        factKeys: ["approvedHiringBudget", "financeNotes"],
+        assumptions: ["HR capacity concerns are considered only from the validated peer response."],
+        confidence: "medium"
+      };
+    }
+
+    if ("peerContext" in payload && "hrData" in payload) {
+      return {
+        answer:
+          "HR agrees hiring should prioritize critical roles, with engineering open roles remaining the main workforce constraint.",
+        factKeys: ["engineeringOpenRoles", "capacityNotes"],
+        assumptions: ["Finance budget constraints are considered only from the validated peer response."],
+        confidence: "medium"
+      };
+    }
+
     if ("financeData" in payload) {
       if (question.includes("hire") || question.includes("hiring") || question.includes("people")) {
         return {
@@ -60,10 +80,9 @@ class DemoLlmClient implements LlmClient {
     if ("financeResponse" in payload && "hrResponse" in payload) {
       return {
         answer:
-          "Recommendation: proceed only with critical hiring because finance has approved hiring budget and HR reports open roles with engineering capacity pressure.",
+          "Recommendation: proceed only with critical hiring. Finance maintains the budget constraint after HR's peer input, and HR agrees engineering capacity is the main workforce trade-off.",
         factKeys: [
           "finance:approvedHiringBudget",
-          "finance:cashBalance",
           "hr:openRolesByDepartment.engineering",
           "hr:capacityNotes"
         ],

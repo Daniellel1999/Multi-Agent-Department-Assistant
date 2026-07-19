@@ -1,6 +1,6 @@
 import type { Agent } from "./Agent.js";
-import { hrSystemPrompt } from "./prompts.js";
-import type { AgentResponse } from "../domain.js";
+import { hrPeerResponsePrompt, hrSystemPrompt } from "./prompts.js";
+import type { AgentResponse, PeerContext } from "../domain.js";
 import type { HrData } from "../data/hrData.js";
 import { getHrFactKeys } from "../data/hrData.js";
 import type { LlmClient } from "../llm/LlmClient.js";
@@ -37,6 +37,35 @@ export class HrAgent implements Agent {
       );
     } catch (error) {
       return fallbackAgentResponse(this.department, `HR Agent could not complete the request. ${safeErrorMessage(error)}`);
+    }
+  }
+
+  async respondToPeer(question: string, peerContext: PeerContext): Promise<AgentResponse> {
+    try {
+      const modelOutput = await this.llmClient.completeJson({
+        messages: [
+          { role: "system", content: hrPeerResponsePrompt },
+          {
+            role: "user",
+            content: JSON.stringify({
+              question,
+              hrData: this.data,
+              allowedFactKeys: getHrFactKeys(),
+              peerContext
+            })
+          }
+        ]
+      });
+
+      return (
+        buildAgentResponse(modelOutput, this.department, this.data) ??
+        fallbackAgentResponse(this.department, "HR Agent peer response could not be grounded in the available HR data.")
+      );
+    } catch (error) {
+      return fallbackAgentResponse(
+        this.department,
+        `HR Agent peer response could not complete the request. ${safeErrorMessage(error)}`
+      );
     }
   }
 }

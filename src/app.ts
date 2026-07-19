@@ -12,7 +12,7 @@ import { routeQuestion } from "./routing/router.js";
 export interface AppDependencies {
   financeAgent: Agent;
   hrAgent: Agent;
-  orchestrator: Pick<Orchestrator, "combineDepartmentResponses">;
+  orchestrator: Pick<Orchestrator, "runDepartmentDiscussion">;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -52,12 +52,7 @@ export async function answerQuestion(question: string, dependencies: AppDependen
   }
 
   if (route.route === "both") {
-    const [financeResponse, hrResponse] = await Promise.all([
-      dependencies.financeAgent.answer(trimmed),
-      dependencies.hrAgent.answer(trimmed)
-    ]);
-
-    return dependencies.orchestrator.combineDepartmentResponses(trimmed, financeResponse, hrResponse);
+    return dependencies.orchestrator.runDepartmentDiscussion(trimmed, dependencies.financeAgent, dependencies.hrAgent);
   }
 
   return {
