@@ -1,131 +1,369 @@
-# Department Agents Assessment
+# Multi-Agent Department Assistant
 
-Small TypeScript CLI application with two isolated AI agents:
+A TypeScript multi-agent AI system that routes business questions to isolated department agents, validates their factual claims against trusted data, and coordinates cross-department reasoning through a bounded orchestration flow.
 
-- **Finance Agent** — receives only hardcoded finance mock data.
-- **HR Agent** — receives only hardcoded HR mock data.
-- **Router** — deterministically routes questions to Finance, HR, both agents, or an unknown route.
-- **Orchestrator** — coordinates one bounded peer-response round and produces a joint recommendation for cross-department questions.
+The project focuses on reliable LLM orchestration rather than autonomous agent loops: department data is isolated, model outputs are validated before use, and unsupported facts are rejected before reaching the final response.
 
-## Setup
+## Key Features
 
-Requires Node.js 20+.
+* **Specialized AI agents** for Finance and HR
+* **Deterministic routing** between Finance, HR, both departments, or an unsupported route
+* **Strict department data isolation**
+* **Bounded peer-to-peer agent discussion**
+* **Fact-key grounding and validation**
+* **Structured LLM responses**
+* **Graceful fallback behavior**
+* **Mockable LLM abstraction**
+* **Unit-tested orchestration and failure scenarios**
+* **Strict TypeScript configuration**
 
-```bash
-npm install
-cp .env.example .env
+## Architecture
+
+```mermaid
+flowchart TD
+    U[User Question] --> R[Deterministic Router]
+
+    R -->|Finance| F[Finance Agent]
+    R -->|HR| H[HR Agent]
+    R -->|Cross-department| F
+    R -->|Cross-department| H
+    R -->|Unknown| X[Unsupported Question Response]
+
+    F --> FV[Finance Fact Validation]
+    H --> HV[HR Fact Validation]
+
+    FV -->|Single-department request| O1[Structured Response]
+    HV -->|Single-department request| O1
+
+    FV --> PC[Validated Peer Context]
+    HV --> PC
+
+    PC --> FP[Finance Peer Response]
+    PC --> HP[HR Peer Response]
+
+    FP --> PV[Peer Response Validation]
+    HP --> PV
+
+    PV --> S[Orchestrator / Final Synthesis]
+
+    S --> GV[Final Grounding Validation]
+    GV --> O2[Grounded Recommendation]
 ```
 
-Set `OPENAI_API_KEY` in `.env`.
+### Cross-Department Flow
 
-## Examples
-
-```bash
-npm run dev -- "What is our monthly revenue?"
-npm run dev -- "How many open roles do we have?"
-npm run dev -- "Should we hire more people?"
-npm run dev -- "What is the weather tomorrow?"
-
-npm run typecheck
-npm test
+```text
+User question
+     │
+     ▼
+Deterministic Router
+     │
+     ▼
+ ┌─────────┐     ┌─────────┐
+ │ Finance │     │   HR    │
+ │  Agent  │     │  Agent  │
+ └────┬────┘     └────┬────┘
+      │               │
+      ▼               ▼
+ Fact validation   Fact validation
+      │               │
+      └───────┬───────┘
+              ▼
+      Validated peer context
+              │
+      ┌───────┴────────┐
+      ▼                ▼
+ Finance refinement   HR refinement
+      │                │
+      └───────┬────────┘
+              ▼
+      Validation & grounding
+              │
+              ▼
+         Orchestrator
+              │
+              ▼
+      Final recommendation
 ```
 
-Responses are structured as JSON:
+Cross-department discussions are deliberately limited to **one peer-response round**. This keeps cost, latency, behavior, and testing predictable while still allowing agents to refine their positions based on another department's validated perspective.
 
-```json
-{
-  "answer": "...",
-  "factsUsed": [],
-  "assumptions": [],
-  "confidence": "low",
-  "department": "unknown"
-}
-```
+## How It Works
 
-## Architecture Summary
+### 1. Routing
 
-The CLI calls an application service that routes the question and invokes only the required agent or agents.
+A deterministic router classifies each question as:
 
-The LLM is accessed through a small `LlmClient` interface. Tests use mock clients and never require a real API key.
+* `finance`
+* `hr`
+* `both`
+* `unknown`
 
-## Routing
+For this small domain, rule-based routing keeps behavior predictable, inexpensive, and easy to test.
 
-Routing uses deterministic keyword rules. This is transparent, inexpensive, predictable, and easy to unit-test for the assessment’s small domain.
+### 2. Department Agents
 
-## Data Isolation
-
-Finance and HR data live in separate modules. Each agent is constructed with only its own department data:
+Each agent receives only its own department data.
 
 ```ts
 new FinanceAgent(llmClient, financeData);
 new HrAgent(llmClient, hrData);
 ```
 
-`Agent.answer()` accepts only the user question. During cross-department discussion, each agent receives only the other department’s initial validated response, never its raw mock data.
+The model returns structured output with an answer, fact keys, assumptions, and confidence.
 
-Prompts guide model behavior, but isolation is enforced by application structure and method signatures.
+### 3. Grounding
 
-## Grounding
+Instead of trusting model-generated values, the application validates returned fact keys against an allow-list and resolves the actual values from trusted data.
 
-Agents return fact identifiers rather than trusted fact values:
+Unsupported or invalid facts are rejected.
+
+### 4. Cross-Department Orchestration
+
+For questions requiring both departments:
+
+1. Finance and HR analyze the question independently.
+2. Their responses are validated.
+3. Each agent receives the other's validated position.
+4. Both produce one refinement.
+5. The orchestrator generates a grounded final recommendation.
+
+The discussion is limited to one round to keep cost, latency, and behavior predictable.
+
+## Reliability and Failure Handling
+
+The orchestration layer is designed to degrade safely.
+
+Examples include:
+
+* invalid model output → low-confidence fallback
+* unsupported fact keys → response rejected
+* missing grounded facts → synthesis skipped
+* one failed peer response → synthesis continues with valid information
+* unsupported final synthesis facts → conservative fallback
+* cross-department synthesis using only one department → rejected
+
+The system prioritizes grounded information over producing an answer at all costs.
+
+## Project Structure
+
+```text
+src/
+├── agents/
+│   ├── Agent.ts
+│   ├── FinanceAgent.ts
+│   ├── HrAgent.ts
+│   └── prompts.ts
+│
+├── data/
+│   ├── financeData.ts
+│   └── hrData.ts
+│
+├── llm/
+│   ├── LlmClient.ts
+│   └── OpenAiLlmClient.ts
+│
+├── orchestration/
+│   ├── groundingValidation.ts
+│   └── orchestrator.ts
+│
+├── routing/
+│   └── router.ts
+│
+├── utils/
+│   ├── errorMessage.ts
+│   └── parseJsonResponse.ts
+│
+├── app.ts
+├── cli.ts
+└── domain.ts
+
+tests/
+├── agents.test.ts
+├── app.test.ts
+├── groundingValidation.test.ts
+├── orchestrator.test.ts
+└── router.test.ts
+```
+
+## Tech Stack
+
+* **TypeScript**
+* **Node.js**
+* **OpenAI API**
+* **Vitest**
+* **tsx**
+* **dotenv**
+
+TypeScript runs with strict compiler settings including:
+
+* `strict`
+* `noUncheckedIndexedAccess`
+* `exactOptionalPropertyTypes`
+
+## Setup
+
+Requires Node.js 20+.
+
+```bash
+git clone https://github.com/Daniellel1999/multi-agent-department-assistant.git
+cd multi-agent-department-assistant
+
+npm install
+cp .env.example .env
+```
+
+Add your OpenAI API key:
+
+```env
+OPENAI_API_KEY=your_api_key_here
+```
+
+You can optionally configure the model:
+
+```env
+OPENAI_MODEL=your_model_name
+```
+
+## Usage
+
+Ask a Finance question:
+
+```bash
+npm run dev -- "What is our monthly revenue?"
+```
+
+Ask an HR question:
+
+```bash
+npm run dev -- "How many open roles do we have?"
+```
+
+Ask a cross-department question:
+
+```bash
+npm run dev -- "Should we hire more people?"
+```
+
+Unsupported questions are rejected instead of being forwarded to an unrelated agent:
+
+```bash
+npm run dev -- "What is the weather tomorrow?"
+```
+
+## Response Format
+
+Responses are returned as structured JSON:
 
 ```json
 {
-  "answer": "...",
-  "factKeys": ["monthlyRevenue"],
+  "answer": "Yes, but selectively...",
+  "factsUsed": [
+    {
+      "source": "finance",
+      "label": "Approved hiring budget",
+      "value": 240000,
+      "path": "approvedHiringBudget"
+    }
+  ],
   "assumptions": [],
-  "confidence": "high"
+  "confidence": "medium",
+  "department": "both"
 }
 ```
 
-Application code validates each identifier against the department allow-list and resolves its value from trusted mock data. Model-generated fact values are never trusted.
+## Testing
 
-The final `factsUsed` array contains only validated facts that materially support the recommendation, constraint, trade-off, or unresolved disagreement.
+Run the test suite:
 
-## Orchestration
-
-For cross-department questions, the orchestrator uses a bounded one-round discussion:
-
-1. Finance and HR independently produce initial analyses.
-2. Both responses are validated and grounded.
-3. Each agent receives the other department’s validated position.
-4. Each agent produces one peer response.
-5. The peer responses are validated.
-6. The orchestrator produces one joint recommendation from the revised positions.
-
-```text
-Initial analyses
-        ↓
-Validation and grounding
-        ↓
-One peer-response round
-        ↓
-Validation and grounding
-        ↓
-Joint recommendation
+```bash
+npm test
 ```
 
-The discussion is limited to one round to keep cost, latency, behavior, and testing predictable.
+Run TypeScript validation:
 
-Single-department questions use one LLM call. A successful full cross-department flow uses up to five LLM calls.
+```bash
+npm run typecheck
+```
 
-If a peer response fails, synthesis continues using the valid information available. If final synthesis fails or references unsupported facts, the application returns a conservative low-confidence fallback.
+Tests use mock LLM clients, so they do not require an OpenAI API key.
 
-## Tests
+The suite covers:
 
-The test suite covers:
+* Finance, HR, cross-department, and unknown routing
+* department data isolation
+* fact-key validation
+* trusted value resolution
+* invalid fact rejection
+* bounded peer discussion
+* peer-response failures
+* synthesis grounding
+* conservative fallback behavior
+* application dispatch
+* prevention of raw cross-department data sharing
 
-- Finance, HR, both, and unknown routing
-- agent data isolation
-- the bounded peer-response flow
-- fact-key validation and trusted value resolution
-- invalid fact rejection
-- final synthesis and fallback behavior
-- application-service dispatch
+## Design Decisions
 
-## Trade-offs and Limitations
+### Why deterministic routing?
 
-- Deterministic routing is less flexible than an LLM classifier but is more appropriate for this small assessment.
-- Fact-key grounding is intentionally simpler than general free-text hallucination detection.
-- Mock mode supports local validation without API calls; normal usage uses the official OpenAI SDK.
-- The project intentionally excludes a UI, API server, database, authentication, memory, vector storage, and agent frameworks.
+The domain contains only two departments, so a rule-based router is easier to understand, cheaper to run, and more predictable than introducing an additional LLM classification step.
+
+### Why not use an agent framework?
+
+The orchestration requirements are small enough to implement directly.
+
+Avoiding an additional framework keeps the agent lifecycle, data boundaries, prompts, validation logic, and failure behavior explicit in the codebase.
+
+### Why one discussion round?
+
+Open-ended agent conversations can introduce unpredictable cost, latency, and behavior.
+
+A bounded interaction allows agents to respond to another department's perspective while keeping the workflow deterministic and testable.
+
+### Why fact keys instead of trusting generated values?
+
+Models can produce plausible but unsupported numbers.
+
+Having the model reference known fact identifiers allows application code to validate the claim and resolve the authoritative value itself.
+
+## Current Scope
+
+This repository focuses specifically on multi-agent orchestration and grounding.
+
+It intentionally uses:
+
+* two departments
+* hardcoded mock business data
+* a CLI interface
+* deterministic routing
+* one bounded discussion round
+
+It does not currently include:
+
+* database persistence
+* authentication
+* REST API
+* web UI
+* vector search or RAG
+* long-term agent memory
+* external Finance or HR integrations
+* autonomous agent loops
+
+These are potential extensions rather than requirements for the core orchestration design.
+
+## Possible Extensions
+
+Future versions could include:
+
+* REST API with Fastify or Express
+* persistent conversations
+* PostgreSQL-backed department data
+* role-based access control
+* additional department agents
+* tool calling
+* RAG over internal documents
+* dynamic routing for larger agent sets
+* observability and token/cost tracking
+* evaluation datasets for agent quality
+* Docker deployment
+* CI/CD with GitHub Actions
